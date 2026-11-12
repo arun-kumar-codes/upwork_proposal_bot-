@@ -1,0 +1,17 @@
+{
+  "name": "proposal-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Proposal Bot \u2014 POST /generate handshake for Project Hub Real Bot mode",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/generate.test.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "_doc": "Canonical profile name -> known alias spellings. normalize_profiles.py renames or merges alias profiles into the canonical one. Names not listed here (and not canonical) are reported as unresolved and left untouched. Canonical names here use the same verified identities as the Hub/Bot portfolio maps (backend/app/services/playground.py is the runtime source; bot/index.js mirrors it and a Bot test asserts the maps agree).",
+  "Web Dev": [
+    "web-dev",
+    "webdev",
+    "WebDev",
+    "web_dev",
+    "web developer"
+  ],
+  "Data AI": [
+    "data-ai",
+    "dataai",
+    "DataAI",
+    "data_ai",
+    "ml",
+    "ML Engineer"
+  ],
+  "Atul": [
+    "atul",
+    "atul"
+  ],
+  "Arun": [
+    "arun",
+    "arun"
+  ],
+  "Aayush": [
+    "aayush",
+    "aayush"
+  ],
+  "Gopalan": [
+    "Gopal",
+    "gopal",
+    "gopalan"
+  ],
+  "Vikas Singh": [
+    "Vikas",
+    "vikas",
+    "vikas singh"
+  ],
+  "Mahima": [
+    "mahima",
+    "mahima"
+  ],
+  "Rahul": [
+    "rahul",
+    "rahul"
+  ],
+  "Yuvraj": [
+    "yuvraj",
+    "yuvraj"
+  ],
+  "Kishan": [
+    "kishan",
+    "kishan"
+  ],
+  "Deepanshu": [
+    "deepanshu",
+    "deepanshu"
+  ],
+  "Faizal/LYT": [
+    "Faizal / LYT",
+    "faizal/lyt",
+    "Faizal /LYT"
+  ],
+  "Gopalan + Vikas": [
+    "Gopal/Vikas",
+    "Gopal / Vikas",
+    "gopal/vikas",
+    "Gopalan + Vikas",
+    "gopalan + vikas"
+  ]
+}

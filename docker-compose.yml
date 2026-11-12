@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: hub
+      POSTGRES_DB: hub
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      bot:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://hub:hub@db:5432/hub
+      API_KEY: ${API_KEY:?Set API_KEY in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      # Compose always uses the bot service name; .env BOT_URL is for native runs (see README).
+      BOT_URL: http://bot:9000
+      BOT_API_KEY: ${BOT_API_KEY:-}
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    environment:
+      BOT_API_KEY: ${BOT_API_KEY:-}
+      PORT: 9000
+      HUB_URL: http://api:8000
+      HUB_API_KEY: ${API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    expose:
+      - "9000"
+    # Host-only publish for local curl debugging; remove to keep the bot private.
+    ports:
+      - "127.0.0.1:9000:9000"
+
+volumes:
+  pgdata:
