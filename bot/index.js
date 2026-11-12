@@ -568,6 +568,56 @@ function citedProof(projects) {
   return (projects || []).find((p) => p.live_url) || (projects || [])[0] || null;
 }
 
+function needTiers(proof, analysis, category) {
+  // Per-need evidence tier of the cited project, keyed by need label:
+  // COVER (distinctive-evidence reason for that need), RELATED (related
+  // reasons only), or NONE. A claim about a need may never exceed that
+  // need's own tier (mirrors Hub).
+  const tiers = {};
+  if (!proof) {
+    for (const n of analysis.needs) tiers[n.label] = "NONE";
+    return tiers;
+  }
+  const { reasons } = scoreProject(proof, analysis, category);
+  for (const n of analysis.needs) {
+    if (reasons.includes(`covers your ${n.label} need`)) tiers[n.label] = "COVER";
+    else if (reasons.length) tiers[n.label] = "RELATED";
+    else tiers[n.label] = "NONE";
+  }
+  return tiers;
+}
+
+function claimTier(proof, analysis, category) {
+  // Evidence tier for the job's PRIMARY need (see needTiers).
+  if (!analysis.primary) {
+    if (!proof) return "NONE";
+    const { reasons } = scoreProject(proof, analysis, category);
+    if (reasons.some((r) => r.startsWith("covers your"))) return "COVER";
+    return reasons.length ? "RELATED" : "NONE";
+  }
+  return needTiers(proof, analysis, category)[analysis.primary.label] || "NONE";
+}
+
+// Coverage-strength phrasing, banned at RELATED/NONE tier (mirrors Hub).
+const STRENGTH_PATTERNS = [
+  /covers your/,
+  /directly related/,
+  /closely aligns/,
+  /aligns? with your/,
+  /aligned with your/,
+  /match(?:es)? your (?:needs|requirements)/,
+  /perfect (?:fit|match)/,
+  /ideal for your/,
+  /same kind of/,
+  /already built/,
+  /exactly what you need/,
+];
+
+function exceedsEvidence(text) {
+  const lower = (text || "").toLowerCase();
+  return STRENGTH_PATTERNS.some((p) => p.test(lower));
+}
+
 function eligibleClaimLabels(proof, analysis) {
   // Need labels the cited project may honestly claim: distinctive only.
   if (!proof) return new Set();
@@ -644,10 +694,14 @@ function templateProposal({ profile, clientName, category, clientMessage, projec
           : "the client still uses it in their daily work."),
     );
     const { reasons } = scoreProject(proof, analysis, category);
-    const needReason = reasons.find((r) => r.startsWith("covers your"));
+    // The fit claim may cover only the PRIMARY need, and only at that
+    // need's own COVER tier (mirrors Hub template).
+    const needReason = primary
+      ? reasons.find((r) => r === `covers your ${primary.label} need`)
+      : null;
     if (needReason) {
       lines.push(`I picked this one because it already ${needReason}.`);
-    } else if (primary && reasons.some((r) => r.startsWith("related experience"))) {
+    } else if (primary && reasons.some((r) => r.startsWith("related experience") || r.startsWith("covers your"))) {
       // Related work only: never imply the specific capability.
       lines.push(
         primary.key === "voice"
@@ -680,7 +734,7 @@ function templateProposal({ profile, clientName, category, clientMessage, projec
   return lines.join("\n");
 }
 
-function validateProposal(text, { portfolio = null, liveUrls = [], collaboratorPortfolios = [], verifiedTechsList = null, unsupportedClaimLabels = null } = {}) {
+function validateProposal(text, { portfolio = null, liveUrls = [], collaboratorPortfolios = [], verifiedTechsList = null, unsupportedClaimLabels = null, claimTier: tier = null, needTiers: tiersMap = null } = {}) {
   if (!text || typeof text !== "string") return false;
   const lower = text.toLowerCase();
   if (!lower.includes("hey")) return false;
@@ -689,6 +743,10 @@ function validateProposal(text, { portfolio = null, liveUrls = [], collaboratorP
   if (lower.includes("github.com")) return false;
   for (const label of unsupportedClaimLabels || []) {
     if (lower.includes(`covers your ${String(label).toLowerCase()} need`)) return false;
+  }
+  if ((tier === "RELATED" || tier === "NONE") && exceedsEvidence(text)) return false;
+  for (const [label, t] of Object.entries(tiersMap || {})) {
+    if (t !== "COVER" && lower.includes(`covers your ${String(label).toLowerCase()} need`)) return false;
   }
   if (verifiedTechsList && claimsUnverifiedTech(text, verifiedTechsList)) return false;
   for (const phrase of BANNED_PHRASES) {
@@ -774,6 +832,7 @@ async function generateProposal(ctx) {
               "NO commas anywhere. Never use these phrases: thank you for reaching out / I would love to help / " +
               "looking forward to connecting / seamless / intricate codebases. " +
               "Accuracy is a hard rule: claim ONLY the verified skills listed in the brief. Technologies the client asks for are their wishlist and never your experience unless also verified. " +
+              "Evidence tier rule: the brief marks the cited project COVER RELATED or NONE. COVER means you may say it covers the named need. RELATED means say only that it is your closest related work and never claim it covers aligns with matches or is directly related to their need. NONE means do not tie the project to their need at all and present it only as recent work. " +
               `Use ONLY these links exactly as written and no others: ${allowedLinks.join(" ") || "none"}. ` +
               "Never paste github.com links. Never invent projects links results or experience. Output only the proposal text.",
           },
@@ -783,6 +842,7 @@ async function generateProposal(ctx) {
               `My name: ${name || ctx.profile || "freelancer"}\n` +
               `Detected category: ${ctx.category || "general"}\n` +
               `Client needs: ${needsLabel}\n` +
+              `Evidence tier for the cited project: ${claimTier(citedProof(ctx.projects || []), analysis, ctx.category)}\n` +
               `Verified skills you may claim: ${verifiedLabel}\n` +
               `Client asks for (do not claim unless verified): ${asksLabel}\n` +
               (ctx.clientName || analysis.clientName
@@ -801,7 +861,7 @@ async function generateProposal(ctx) {
     const eligible = eligibleClaimLabels(citedProof(ctx.projects || []), analysis);
     const unsupportedClaimLabels = analysis.needs.map((n) => n.label).filter((l) => !eligible.has(l));
     // The validator is the contract: corporate or off-shape output never ships.
-    if (!validateProposal(text, { portfolio, liveUrls, collaboratorPortfolios, verifiedTechsList: verified, unsupportedClaimLabels })) return fallback();
+    if (!validateProposal(text, { portfolio, liveUrls, collaboratorPortfolios, verifiedTechsList: verified, unsupportedClaimLabels, claimTier: claimTier(citedProof(ctx.projects || []), analysis, ctx.category), needTiers: needTiers(citedProof(ctx.projects || []), analysis, ctx.category) })) return fallback();
     return { text: sanitizeProposal(text), mode: "openai" };
   } catch {
     return fallback();
@@ -939,6 +999,9 @@ module.exports._test = {
   verifiedTechs,
   claimsUnverifiedTech,
   citedProof,
+  claimTier,
+  needTiers,
+  exceedsEvidence,
   eligibleClaimLabels,
   scoreProject,
   PORTFOLIO_LINKS,

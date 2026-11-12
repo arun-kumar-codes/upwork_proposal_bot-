@@ -924,7 +924,11 @@ def test_voice_claim_requires_distinctive_evidence():
         client_message=VOICE_JOB, category=None,
     )
     assert "covers your voice calls and booking need" not in weak
-    assert "covers your AI agent work need" in weak  # honest related claim
+    # Secondary-need coverage is no longer the headline fit claim: the
+    # primary need (voice) is only RELATED for this project, so the
+    # template uses related wording (Atul secondary-need case).
+    assert "covers your AI agent work need" not in weak
+    assert "shows related AI agent work" in weak
 
 
 def test_voice_weak_only_wording_never_implies_telephony():
@@ -1087,5 +1091,129 @@ def test_validator_and_llm_guard_reject_unsupported_voice_claim(monkeypatch):
     )
     # Unsupported LLM claim rejected: the honest template ships instead.
     assert "covers your voice calls and booking need" not in reply
-    assert "covers your AI agent work need" in reply
+    assert "covers your AI agent work need" not in reply
+    assert "shows related AI agent work" in reply
+
+
+# The four Simulated-mode relevance bridges from the 176-proposal live
+# evaluation (proposal-quality-evaluation-report.md), comma-free adaptations
+# so only the evidence-strength rule can reject them.
+_EVAL_BRIDGES = [
+    "this experience is directly related to the automation of manual work.",
+    "this project has relevant dashboards experience which aligns with your needs.",
+    "this project aligns with your need for automating manual work.",
+    "this project aligns with your needs as it involved user management.",
+    "this project can match your needs exactly.",
+    "this project closely aligns with your requirements.",
+]
+
+
+def _bridge_text(sentence: str) -> str:
+    return (
+        "hey Sara\nI am Atul a full stack dev\n"
+        "recently I worked on AI Cofounder https://agent.example.com\n"
+        f"{sentence}\n"
+        "please review my portfolio: http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff"
+    )
+
+
+def test_strength_language_rejected_below_cover_tier():
+    """Negative: coverage-strength wording fails at RELATED and NONE tiers."""
+    from app.services.playground import validate_reply
+
+    ctx = dict(
+        portfolio="http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff",
+        live_urls=["https://agent.example.com"],
+    )
+    for sentence in _EVAL_BRIDGES:
+        text = _bridge_text(sentence)
+        assert not validate_reply(text, claim_tier="RELATED", **ctx), sentence
+        assert not validate_reply(text, claim_tier="NONE", **ctx), sentence
+
+
+def test_strength_language_allowed_at_cover_and_honest_related_passes():
+    """Positive: COVER tier may claim coverage; honest related wording passes."""
+    from app.services.playground import validate_reply
+
+    ctx = dict(
+        portfolio="http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff",
+        live_urls=["https://agent.example.com"],
+    )
+    for sentence in _EVAL_BRIDGES:
+        assert validate_reply(_bridge_text(sentence), claim_tier="COVER", **ctx), sentence
+    honest = _bridge_text("I picked this one because it is my closest related work.")
+    assert validate_reply(honest, claim_tier="RELATED", **ctx)
+    assert validate_reply(honest, claim_tier="NONE", **ctx)
+    # Legacy callers without a tier keep the previous behaviour.
+    assert validate_reply(_bridge_text(_EVAL_BRIDGES[0]), **ctx)
+
+
+def test_claim_tier_reflects_scorer_reasons():
+    """Tiers come from the scorer: distinctive proof COVER, none NONE."""
+    from app.models import Project
+    from app.services.playground import analyze_job, claim_tier
+
+    _cofounder, tara = _voice_projects()
+    analysis = analyze_job(VOICE_JOB, None)
+    assert claim_tier(tara, analysis, None) == "COVER"
+    assert claim_tier(None, analysis, None) == "NONE"
+    unrelated = Project(
+        title="PrimeTime", category="web",
+        live_url="https://primetime.example.com",
+        description="Kitchen timer app for home cooks with recipes",
+        result="", tech_stack=[],
+    )
+    n8n_analysis = analyze_job(
+        "Hi I am Jonas we need an n8n automation workflow that watches our "
+        "CRM for new leads and sends personalised follow up emails",
+        "automation",
+    )
+    assert claim_tier(unrelated, n8n_analysis, "automation") == "NONE"
+
+
+def test_need_tiers_primary_secondary_and_validator_enforcement():
+    """Atul secondary-need case: tiers are per need, enforced per need.
+
+    AI Cofounder covers the secondary "AI agent work" need for a voice job
+    but is only RELATED for the primary voice need. The primary tier gates
+    strength language, and a covers-claim for any need requires that
+    need's own COVER tier.
+    """
+    from app.services.playground import (
+        analyze_job,
+        claim_tier,
+        need_tiers,
+        validate_reply,
+    )
+
+    cofounder, tara = _voice_projects()
+    analysis = analyze_job(VOICE_JOB, None)
+    tiers = need_tiers(cofounder, analysis, None)
+    assert tiers["AI agent work"] == "COVER"
+    assert tiers["voice calls and booking"] == "RELATED"
+    assert claim_tier(cofounder, analysis, None) == "RELATED"
+    assert claim_tier(tara, analysis, None) == "COVER"
+
+    ctx = dict(
+        portfolio="http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff",
+        live_urls=["https://agent.example.com"],
+    )
+    atul_claim = _bridge_text(
+        "I picked this one because it already covers your website build need."
+    )
+    # The claimed need's own tier decides: RELATED rejects, COVER allows.
+    assert not validate_reply(
+        atul_claim, need_tiers_map={"website build": "RELATED"}, **ctx
+    )
+    assert validate_reply(
+        atul_claim, need_tiers_map={"website build": "COVER"}, **ctx
+    )
+    # Primary RELATED also blocks the same sentence via the strength gate,
+    # even when a secondary need is COVER.
+    assert not validate_reply(
+        atul_claim,
+        claim_tier="RELATED",
+        need_tiers_map={"website build": "COVER", "AI agent work": "COVER"},
+        **ctx,
+    )
 

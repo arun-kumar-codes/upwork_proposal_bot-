@@ -524,6 +524,68 @@ def eligible_claim_labels(proof: Project | None, analysis: dict) -> set[str]:
     }
 
 
+def need_tiers(
+    proof: Project | None, analysis: dict, category: str | None
+) -> dict[str, str]:
+    """Per-need evidence tier of the cited project, keyed by need label.
+
+    COVER: distinctive-evidence reason for that need ("covers your ...
+    need"). RELATED: related reasons only. NONE: nothing. A claim about a
+    need may never exceed that need's own tier — a project covering a
+    secondary need does not earn coverage language for the primary need.
+    """
+    if proof is None:
+        return {n["label"]: "NONE" for n in analysis["needs"]}
+    _score, reasons = score_project(proof, analysis, category)
+    tiers: dict[str, str] = {}
+    for need in analysis["needs"]:
+        label = need["label"]
+        if f"covers your {label} need" in reasons:
+            tiers[label] = "COVER"
+        elif reasons:
+            tiers[label] = "RELATED"
+        else:
+            tiers[label] = "NONE"
+    return tiers
+
+
+def claim_tier(
+    proof: Project | None, analysis: dict, category: str | None
+) -> str:
+    """Evidence tier for the job's PRIMARY need (see need_tiers)."""
+    primary = analysis.get("primary")
+    if primary is None:
+        if proof is None:
+            return "NONE"
+        _score, reasons = score_project(proof, analysis, category)
+        if any(r.startswith("covers your") for r in reasons):
+            return "COVER"
+        return "RELATED" if reasons else "NONE"
+    return need_tiers(proof, analysis, category).get(primary["label"], "NONE")
+
+
+# Coverage-strength phrasing. At RELATED/NONE tier none of this may be said
+# about the cited project: the scorer granted at most related experience.
+_STRENGTH_PATTERNS = (
+    r"covers your",
+    r"directly related",
+    r"closely aligns",
+    r"aligns? with your",
+    r"aligned with your",
+    r"match(?:es)? your (?:needs|requirements)",
+    r"perfect (?:fit|match)",
+    r"ideal for your",
+    r"same kind of",
+    r"already built",
+    r"exactly what you need",
+)
+
+
+def _exceeds_evidence(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(re.search(p, lower) for p in _STRENGTH_PATTERNS)
+
+
 def _role_for(category: str | None, projects: list[Project]) -> str:
     # Role describes the freelancer's own work: the top project's category
     # wins over the client's category, so a store job never relabels an
@@ -597,13 +659,23 @@ def template_reply(
             )
         )
         _score, proof_reasons = score_project(proof, analysis, category)
+        # The fit claim may cover only the PRIMARY need, and only at that
+        # need's own COVER tier. Coverage of a secondary need is related
+        # evidence for this job, never the headline claim.
         need_reason = next(
-            (r for r in proof_reasons if r.startswith("covers your")), None
+            (
+                r
+                for r in proof_reasons
+                if primary is not None
+                and r == f"covers your {primary['label']} need"
+            ),
+            None,
         )
         if need_reason:
             lines.append(f"I picked this one because it already {need_reason}.")
         elif primary is not None and any(
-            r.startswith("related experience") for r in proof_reasons
+            r.startswith(("related experience", "covers your"))
+            for r in proof_reasons
         ):
             # Related work only: never imply the specific capability.
             if primary["key"] == "voice":
@@ -667,6 +739,8 @@ def validate_reply(
     collaborator_portfolios: list[str] | None = None,
     verified_techs_list: list[str] | None = None,
     unsupported_claim_labels: list[str] | None = None,
+    claim_tier: str | None = None,
+    need_tiers_map: dict[str, str] | None = None,
 ) -> bool:
     """True only if the text follows the proposal contract."""
     if not text:
@@ -679,6 +753,11 @@ def validate_reply(
     for label in unsupported_claim_labels or []:
         if f"covers your {label.lower()} need" in lower:
             return False  # coverage claim without distinctive evidence
+    if claim_tier in ("RELATED", "NONE") and _exceeds_evidence(text):
+        return False  # relevance language stronger than verified evidence
+    for label, tier in (need_tiers_map or {}).items():
+        if tier != "COVER" and f"covers your {label.lower()} need" in lower:
+            return False  # this need's own tier does not support coverage
     if verified_techs_list is not None and _claims_unverified_tech(
         text, verified_techs_list
     ):
@@ -786,15 +865,23 @@ async def generate_reply(
         "codebases. Accuracy is a hard rule: claim ONLY the verified skills "
         "listed in the brief. Technologies the client asks for are their "
         "wishlist — never present them as your experience unless they are "
-        "also verified. Share LIVE demo links only — never GitHub or "
+        "also verified. Evidence tier rule: the brief marks the cited "
+        "project COVER RELATED or NONE. COVER means you may say it covers "
+        "the named need. RELATED means say only that it is your closest "
+        "related work and never claim it covers aligns with matches or is "
+        "directly related to their need. NONE means do not tie the project "
+        "to their need at all and present it only as recent work. "
+        "Share LIVE demo links only — never GitHub or "
         "repository links, never invent links results or experience. Use "
         f"ONLY these links exactly: {allowed_links}. Output only the "
         "proposal text."
     )
+    tier = claim_tier(cited_proof(projects), analysis, category)
     user = (
         f"My name: {name or profile.name}\n"
         f"Detected category: {category or 'general'}\n"
         f"Client needs: {needs_label}\n"
+        f"Evidence tier for the cited project: {tier}\n"
         f"Verified skills you may claim: {verified_label}\n"
         f"Client asks for (do not claim unless verified): {asks_label}\n"
         + (
@@ -838,6 +925,8 @@ async def generate_reply(
         collaborator_portfolios=collaborator_urls,
         verified_techs_list=verified,
         unsupported_claim_labels=unsupported,
+        claim_tier=tier,
+        need_tiers_map=need_tiers(cited_proof(projects), analysis, category),
     ):
         return text
     # Corporate or off-shape LLM output never ships: use the template.

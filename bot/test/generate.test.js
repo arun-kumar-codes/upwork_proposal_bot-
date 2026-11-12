@@ -531,7 +531,11 @@ test("hardening: voice claim requires distinctive evidence (Atul x voice)", () =
 
   const weak = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [cofounder] });
   assert.doesNotMatch(weak, /covers your voice calls and booking need/);
-  assert.match(weak, /covers your AI agent work need/); // honest related claim
+  // Secondary-need coverage is no longer the headline fit claim: the
+  // primary need (voice) is only RELATED for this project, so the template
+  // uses related wording (Atul secondary-need case).
+  assert.doesNotMatch(weak, /covers your AI agent work need/);
+  assert.match(weak, /shows related AI agent work/);
 
   const strong = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [tara] });
   assert.match(strong, /covers your voice calls and booking need/);
@@ -602,6 +606,45 @@ test("hardening: validator rejects unsupported coverage claims", () => {
   const ctx = { portfolio: "http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff", liveUrls: ["https://agent.example.com"] };
   assert.equal(validateProposal(claim, { ...ctx, unsupportedClaimLabels: ["voice calls and booking"] }), false);
   assert.equal(validateProposal(claim, { ...ctx, unsupportedClaimLabels: [] }), true);
+});
+
+test("evidence tiers: strength language rejected below COVER, honest related passes", () => {
+  const { validateProposal, claimTier, analyzeJob } = app._test;
+  const ctx = { portfolio: "http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff", liveUrls: ["https://agent.example.com"] };
+  const bridges = [
+    "this experience is directly related to the automation of manual work.",
+    "this project aligns with your need for automating manual work.",
+    "this project can match your needs exactly.",
+    "this project closely aligns with your requirements.",
+  ];
+  for (const s of bridges) {
+    const text = `hey Sara\nI am Atul a full stack dev\nrecently I worked on AI Cofounder https://agent.example.com\n${s}\nplease review my portfolio: ${ctx.portfolio}`;
+    assert.equal(validateProposal(text, { ...ctx, claimTier: "RELATED" }), false, s);
+    assert.equal(validateProposal(text, { ...ctx, claimTier: "NONE" }), false, s);
+    assert.equal(validateProposal(text, { ...ctx, claimTier: "COVER" }), true, s);
+    assert.equal(validateProposal(text, ctx), true, s); // legacy callers unchanged
+  }
+  const honest = `hey Sara\nI am Atul a full stack dev\nrecently I worked on AI Cofounder https://agent.example.com\nI picked this one because it is my closest related work.\nplease review my portfolio: ${ctx.portfolio}`;
+  assert.equal(validateProposal(honest, { ...ctx, claimTier: "RELATED" }), true);
+  const analysis = analyzeJob("Hi I am Sara we need a voice agent that calls leads and books meetings", null);
+  assert.equal(claimTier(null, analysis, null), "NONE");
+  assert.equal(claimTier({ title: "Tara", category: "ai + automation", live_url: "https://tara.example.com", description: "Business automation through WhatsApp or voice calls and booking", result: "", tech_stack: [] }, analysis, null), "COVER");
+});
+
+test("evidence tiers: per-need enforcement (Atul secondary-need case)", () => {
+  const { validateProposal, claimTier, needTiers, analyzeJob } = app._test;
+  const ctx = { portfolio: "http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff", liveUrls: ["https://agent.example.com"] };
+  const cofounder = { title: "AI Cofounder", category: "ai + full stack", live_url: "https://agent.example.com", description: "AI Cofounder agent that helps entrepreneurs brainstorm ideas and market analysis", result: "", tech_stack: [] };
+  const analysis = analyzeJob(VOICE_JOB_BOT, null);
+  const tiers = needTiers(cofounder, analysis, null);
+  assert.equal(tiers["AI agent work"], "COVER");
+  assert.equal(tiers["voice calls and booking"], "RELATED");
+  assert.equal(claimTier(cofounder, analysis, null), "RELATED");
+  assert.equal(claimTier(null, analysis, null), "NONE");
+  const claim = `hey Sara\nI am Atul a full stack dev\nrecently I worked on AI Cofounder https://agent.example.com\nI picked this one because it already covers your website build need.\nplease review my portfolio: ${ctx.portfolio}`;
+  assert.equal(validateProposal(claim, { ...ctx, needTiers: { "website build": "RELATED" } }), false);
+  assert.equal(validateProposal(claim, { ...ctx, needTiers: { "website build": "COVER" } }), true);
+  assert.equal(validateProposal(claim, { ...ctx, claimTier: "RELATED", needTiers: { "website build": "COVER" } }), false);
 });
 
 test("isolation: unknown freelancer is rejected, never signed for", async () => {
