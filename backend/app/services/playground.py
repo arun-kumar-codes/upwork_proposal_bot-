@@ -23,7 +23,14 @@ _WORD = re.compile(r"[a-z0-9+#]+")
 
 
 def detect_category(message: str, categories: list[str]) -> str | None:
-    """Score known categories against the client message; best match wins."""
+    """Score known categories against the client message; best match wins.
+
+    Hub categories are project labels, so a voice, store or dashboard post
+    names no Hub category token. When no Hub category scores, fall back to
+    the job's primary need so those posts still get an accurate category
+    instead of a blank one. Need labels never collide with Hub category
+    tokens, so project-pool filtering and scoring are unaffected.
+    """
     text = (message or "").lower()
     words = set(_WORD.findall(text))
     best: str | None = None
@@ -37,7 +44,12 @@ def detect_category(message: str, categories: list[str]) -> str | None:
             score += 3
         if score > best_score:
             best, best_score = cat, score
-    return best
+    if best is not None:
+        return best
+    primary = analyze_job(message)["primary"]
+    if primary is not None:
+        return _NEED_CATEGORY.get(primary["key"])
+    return None
 
 
 # --- Job-requirement analysis -------------------------------------------------
@@ -71,53 +83,69 @@ TECH_DISPLAY = {
 
 # Ordered by specificity: the first matching need drives understanding and
 # approach lines, so a voice-booking job reads as voice work, not generic AI.
+# "proof" words are distinctive evidence: only they may support a
+# "covers your ... need" claim. "weak" words show related experience only —
+# a generic word such as "agent" or "AI" never proves voice calls, a store
+# build, or any other specific capability.
 NEED_SIGNALS: list[dict] = [
     {"key": "voice", "aliases": ["voice agent", "voice ai", "voice assistant", "phone call", "outbound calls", "inbound calls", "calls leads"],
      "label": "voice calls and booking",
      "understand": "you need a voice agent that talks to leads and books the meeting without your team chasing calls",
      "approach": "I would start with your call flow and booking rules and test real calls early so the tone and handoffs feel right",
-     "proof": ["voice", "calls", "call", "calling", "calendar", "booking", "leads", "meetings", "whatsapp", "agent"]},
+     "proof": ["voice", "calls", "call", "calling", "phone", "telephony", "outbound", "inbound", "calendar", "booking", "whatsapp"],
+     "weak": ["agent", "agents", "leads", "meetings"]},
     {"key": "docs", "aliases": ["documents", "manuals", "pdf", "knowledge base", "searching pdf", "our own docs"],
      "label": "answers from your documents",
      "understand": "you need quick answers from your own documents so your team stops hunting through files",
      "approach": "I would start with your real documents and the questions your team asks most and build the search around those first",
-     "proof": ["documents", "document", "rag", "uploads", "questions", "answers", "manuals", "pdf"]},
+     "proof": ["documents", "document", "rag", "uploads", "questions", "answers", "manuals", "pdf"],
+     "weak": []},
     {"key": "crm", "aliases": ["crm", "hubspot", "appointments", "front desk", "sales pipeline", "manage patient"],
      "label": "customer and booking flow",
      "understand": "you need one simple flow that keeps customers and bookings together instead of scattered follow ups",
      "approach": "I would start with your booking and follow up flow and keep it simple for the team that uses it daily",
-     "proof": ["crm", "hospital", "appointments", "booking", "leads", "customers", "patient"]},
+     "proof": ["crm", "hospital", "appointments", "booking", "leads", "customers", "patient"],
+     "weak": []},
     {"key": "store", "aliases": ["shopify", "store", "ecommerce", "e-commerce", "checkout", "cart", "pay online", "products"],
      "label": "store and checkout",
      "understand": "you need a store where customers can browse and pay without friction",
      "approach": "I would start with your product pages and checkout and get a live preview in front of you early",
-     "proof": ["store", "shop", "products", "checkout", "shoppers", "promotions", "offers", "customers"]},
+     "proof": ["store", "shop", "shopify", "products", "checkout", "cart", "shoppers", "promotions", "ecommerce"],
+     "weak": ["customers", "offers"]},
     {"key": "dashboard", "aliases": ["dashboard", "trading", "charts", "reporting", "admin panel", "analytics"],
      "label": "dashboard and live data",
      "understand": "you need a clear dashboard that shows live numbers and lets you act fast",
      "approach": "I would start with the main screen your team opens daily and wire the live data into that first",
-     "proof": ["dashboard", "trading", "charts", "orders", "reports", "data", "platform", "live"]},
+     "proof": ["dashboard", "trading", "charts", "reporting", "analytics", "orders", "reports"],
+     "weak": ["data", "platform", "live"]},
     {"key": "scraping", "aliases": ["scrap", "crawl", "extract data", "collect leads", "gather data"],
      "label": "data collection",
      "understand": "you need clean data collected on schedule without manual copying",
      "approach": "I would start with one source end to end and lock the output format before scaling to the rest",
-     "proof": ["scrapes", "scraping", "extracts", "data", "websites", "pipeline"]},
+     "proof": ["scrapes", "scraping", "extracts", "crawl", "crawls"],
+     "weak": ["data", "websites", "pipeline"]},
     {"key": "automation", "aliases": ["automat", "whatsapp", "email sequence", "manual work", "manual steps", "manual process"],
      "label": "automation of manual work",
      "understand": "you need the slow manual steps taken off your team so follow ups happen on time every time",
      "approach": "I would map your current manual flow first and automate the slowest step first so you see value fast",
-     "proof": ["automation", "automate", "whatsapp", "email", "scheduling", "invoicing", "workflow"]},
+     "proof": ["automation", "automate", "automated", "workflow", "scheduling", "invoicing"],
+     "weak": ["whatsapp", "email"]},
     {"key": "ai_agent", "aliases": ["ai agent", "chatbot", "ai assistant", "ai tool", "artificial intelligence", "agent that"],
      "label": "AI agent work",
      "understand": "you need an AI agent that does real work for customers instead of only answering chats",
      "approach": "I would start with the three jobs your agent must finish and build those end to end before adding extras",
-     "proof": ["agent", "agents", "ai", "chatbot", "voice", "assistant", "automation"]},
+     "proof": ["agent", "agents", "ai", "chatbot", "voice", "assistant", "automation"],
+     "weak": []},
     {"key": "website", "aliases": ["website", "web app", "landing page", "web developer", "site for"],
      "label": "website build",
      "understand": "you need a clean website that explains your offer and turns visitors into enquiries",
      "approach": "I would start with your main page and enquiry flow and share a live preview in small steps",
-     "proof": ["site", "website", "web", "app", "pages", "login"]},
+     "proof": ["site", "website", "web", "pages", "login"],
+     "weak": ["app"]},
 ]
+
+# Primary need -> category label, used only when no Hub category matches.
+_NEED_CATEGORY = {"voice": "voice", "store": "shopify", "dashboard": "dashboard"}
 
 
 def canonical_techs(text: str) -> set[str]:
@@ -210,8 +238,13 @@ def score_project(
     for need in analysis["needs"][:3]:
         hits = [w for w in need["proof"] if w in content_words]
         if hits:
-            score += 2
+            # Distinctive evidence only: this is the claim-eligible tier.
+            score += 3
             reasons.append(f"covers your {need['label']} need")
+        elif any(w in content_words for w in need.get("weak", [])):
+            # Related experience: ranks below real proof, never claimed.
+            score += 1
+            reasons.append(f"related experience: {need['label']}")
     overlap = analysis["words"] & content_words
     if overlap:
         score += min(len(overlap), 4)
@@ -429,6 +462,21 @@ _INTERNAL_MARKERS = (
     "team confirmed",
     "confirmed active",
     "internal note",
+    # Status / collaboration boilerplate from the same Notes column: an
+    # internal workflow state or a people note is never client proof.
+    "doc status",
+    "shared by",
+    "live ip",
+    "profile not",
+    "not listed",
+    "also listed",
+    "listed twice",
+    "counted once",
+    "repo name",
+    "on laptop",
+    "cloudflare",
+    "previous deployment",
+    "saml login",
 )
 
 
@@ -447,6 +495,33 @@ def public_proof_text(project: Project) -> str:
         return description
     # Fail closed: a tainted field is dropped whole, never sentence-mined.
     return ""
+
+
+def cited_proof(projects: list[Project]) -> Project | None:
+    """The project a proposal actually cites: first with a live link."""
+    return next(
+        (p for p in projects if (p.live_url or "").strip()),
+        projects[0] if projects else None,
+    )
+
+
+def eligible_claim_labels(proof: Project | None, analysis: dict) -> set[str]:
+    """Need labels the cited project may honestly claim to cover.
+
+    Distinctive proof words only. A project matching nothing but a weak
+    word (for example "agent" on a voice job) earns no coverage claim.
+    """
+    if proof is None:
+        return set()
+    content = (
+        f"{proof.title} {public_proof_text(proof)} {proof.description or ''}"
+    ).lower()
+    content_words = set(_WORD.findall(content))
+    return {
+        need["label"]
+        for need in analysis["needs"]
+        if any(w in content_words for w in need["proof"])
+    }
 
 
 def _role_for(category: str | None, projects: list[Project]) -> str:
@@ -507,10 +582,7 @@ def template_reply(
         primary["understand"] if primary else _JOB_PHRASES.get(role, _JOB_PHRASES["web"])
     )
 
-    proof = next(
-        (p for p in projects if (p.live_url or "").strip()),
-        projects[0] if projects else None,
-    )
+    proof = cited_proof(projects)
     if proof is not None:
         live = (proof.live_url or "").strip()
         lines.append("")
@@ -530,6 +602,22 @@ def template_reply(
         )
         if need_reason:
             lines.append(f"I picked this one because it already {need_reason}.")
+        elif primary is not None and any(
+            r.startswith("related experience") for r in proof_reasons
+        ):
+            # Related work only: never imply the specific capability.
+            if primary["key"] == "voice":
+                lines.append(
+                    "I picked this one because it shows related AI agent work."
+                )
+            else:
+                lines.append(
+                    "I picked this one because it is my closest related work."
+                )
+        elif primary is not None:
+            # No verified match for this need: show recent work honestly
+            # instead of dressing it up as proof for their job.
+            lines.append("I picked this one to show recent live work I shipped.")
 
     lines.append("")
     if primary:
@@ -578,6 +666,7 @@ def validate_reply(
     live_urls: list[str],
     collaborator_portfolios: list[str] | None = None,
     verified_techs_list: list[str] | None = None,
+    unsupported_claim_labels: list[str] | None = None,
 ) -> bool:
     """True only if the text follows the proposal contract."""
     if not text:
@@ -587,6 +676,9 @@ def validate_reply(
         return False
     if "," in text or "github.com" in lower:
         return False
+    for label in unsupported_claim_labels or []:
+        if f"covers your {label.lower()} need" in lower:
+            return False  # coverage claim without distinctive evidence
     if verified_techs_list is not None and _claims_unverified_tech(
         text, verified_techs_list
     ):
@@ -735,12 +827,17 @@ async def generate_reply(
         text = str(data["choices"][0]["message"]["content"]).strip()
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         raise RuntimeError(f"LLM request failed: {exc}")
+    eligible = eligible_claim_labels(cited_proof(projects), analysis)
+    unsupported = [
+        n["label"] for n in analysis["needs"] if n["label"] not in eligible
+    ]
     if validate_reply(
         text,
         portfolio=portfolio,
         live_urls=live_urls,
         collaborator_portfolios=collaborator_urls,
         verified_techs_list=verified,
+        unsupported_claim_labels=unsupported,
     ):
         return text
     # Corporate or off-shape LLM output never ships: use the template.

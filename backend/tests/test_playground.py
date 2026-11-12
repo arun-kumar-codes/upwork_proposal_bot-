@@ -873,3 +873,219 @@ def test_simulated_no_projects_never_calls_llm(monkeypatch):
     ) in reply
     assert "github.com" not in reply
 
+
+# --- Hardening: distinctive proof, internal text, honest relevance ----------
+
+VOICE_JOB = (
+    "Hi I am Sara we run a real estate agency and we need a voice agent "
+    "that calls leads on the phone and books meetings on our calendar so "
+    "our team stops chasing calls all day"
+)
+
+
+def _voice_projects():
+    from app.models import Project
+
+    cofounder = Project(
+        title="AI Cofounder", category="ai + full stack",
+        live_url="https://agent.example.com",
+        description="AI Cofounder agent that helps entrepreneurs brainstorm ideas and market analysis",
+        result="", tech_stack=[],
+    )
+    tara = Project(
+        title="Tara", category="ai + full stack + automation",
+        live_url="https://tara.example.com",
+        description="Business automation through WhatsApp or voice. Connects tools for email and follow ups",
+        result="", tech_stack=[],
+    )
+    return cofounder, tara
+
+
+def test_voice_claim_requires_distinctive_evidence():
+    """Smoke regression (Atul x voice): 'agent' alone never proves voice."""
+    from app.models import Profile
+    from app.services.playground import select_projects, template_reply
+
+    cofounder, tara = _voice_projects()
+    # Real voice proof outranks the newer generic agent project.
+    picked = select_projects([cofounder, tara], None, 3, client_message=VOICE_JOB)
+    assert picked[0][0].title == "Tara"
+    assert "covers your voice calls and booking need" in picked[0][1]
+
+    strong = template_reply(
+        profile=Profile(name="Atul", skills=[]), projects=[tara],
+        client_message=VOICE_JOB, category=None,
+    )
+    assert "covers your voice calls and booking need" in strong
+
+    # Generic agent work may be cited only as related AI experience.
+    weak = template_reply(
+        profile=Profile(name="Atul", skills=[]), projects=[cofounder],
+        client_message=VOICE_JOB, category=None,
+    )
+    assert "covers your voice calls and booking need" not in weak
+    assert "covers your AI agent work need" in weak  # honest related claim
+
+
+def test_voice_weak_only_wording_never_implies_telephony():
+    """A weak-only match gets related wording, not a voice capability claim."""
+    from app.models import Profile, Project
+    from app.services.playground import template_reply
+
+    helper = Project(
+        title="Lead Helper", category="ai",
+        live_url="https://helper.example.com",
+        description="agent dashboard that helps teams track leads",
+        result="", tech_stack=[],
+    )
+    reply = template_reply(
+        profile=Profile(name="Aayush", skills=[]), projects=[helper],
+        client_message="We need a voice agent to answer our phone calls",
+        category=None,
+    )
+    assert "covers your voice" not in reply
+    assert "shows related AI agent work" in reply
+
+
+def test_internal_status_and_collaboration_text_never_leaks():
+    """Smoke regression: 'Doc status' / 'Shared by' yield to descriptions."""
+    from app.models import Profile, Project
+    from app.services.playground import public_proof_text, template_reply
+
+    lomex = Project(
+        title="Lomex AI", category="ai + full stack",
+        live_url="https://lomex.ai",
+        description="Multi-tenant RAG assistant. Each tenant uploads documents and asks questions",
+        result="Doc status: In-Progress.", tech_stack=[],
+    )
+    assert public_proof_text(lomex).startswith("Multi-tenant RAG assistant")
+    reply = template_reply(
+        profile=Profile(name="Atul", skills=[]), projects=[lomex],
+        client_message="Hi I am Sara we need an AI assistant that answers questions from our own documents and manuals",
+        category="ai",
+    )
+    assert "Doc status" not in reply and "In-Progress" not in reply
+    assert "uploads documents and asks questions" in reply
+
+    go = Project(
+        title="Tellaigent GO", category="ai + full stack + automation",
+        live_url="https://go.example.com",
+        description="AI sales rep. Makes outbound calls and books Google Calendar meetings",
+        result="Live IP app. Shared by Gopalan and Vikas.", tech_stack=[],
+    )
+    assert "Makes outbound calls" in public_proof_text(go)
+    assert "Shared by" not in public_proof_text(go)
+
+    # Legitimate public results are preserved, not stripped.
+    legit = Project(
+        title="Clinic Agent", category="ai",
+        live_url="https://clinic.example.com",
+        description="phone agent for clinics",
+        result="Live phone agents are answering calls for the clinic",
+        tech_stack=[],
+    )
+    assert public_proof_text(legit) == "Live phone agents are answering calls for the clinic"
+
+
+def test_shopify_claim_requires_real_store_evidence():
+    """Smoke regression: Arun x store stays positive; unrelated stays honest."""
+    from app.models import Profile, Project
+    from app.services.playground import template_reply
+
+    job = "Hi I am Lena we need a Shopify store where customers can browse our products and pay online with a smooth checkout and cart"
+    deals = Project(
+        title="AhorraTya", category="full stack",
+        live_url="https://deals.example.com",
+        description="Deals site so shoppers can find store promotions and compare offers",
+        result="", tech_stack=[],
+    )
+    positive = template_reply(
+        profile=Profile(name="Arun", skills=[]), projects=[deals],
+        client_message=job, category=None,
+    )
+    assert "covers your store and checkout need" in positive
+
+    cofounder, _tara = _voice_projects()
+    negative = template_reply(
+        profile=Profile(name="Atul", skills=[]), projects=[cofounder],
+        client_message=job, category=None,
+    )
+    assert "covers your store and checkout need" not in negative
+    assert "recent live work I shipped" in negative  # honest, no store claim
+
+
+def test_category_detection_covers_voice_store_dashboard():
+    from app.services.playground import detect_category
+
+    cats = ["ai", "ai + full stack", "ai + full stack + automation", "automation", "full stack"]
+    assert detect_category(VOICE_JOB, cats) == "voice"
+    assert detect_category(
+        "Hi I am Lena we need a Shopify store where customers can browse products and pay online", cats
+    ) == "shopify"
+    assert detect_category(
+        "Hi I am Raj we need a dashboard with live trading charts and reporting", cats
+    ) == "dashboard"
+    # Existing behaviour is unchanged.
+    assert detect_category("Build me a web app with checkout", ["web", "ml"]) == "web"
+    assert detect_category("Hello, how are you?", cats) is None
+
+
+def test_validator_and_llm_guard_reject_unsupported_voice_claim(monkeypatch):
+    """An LLM may not claim voice coverage the cited project cannot prove."""
+    import app.services.playground as svc
+    from app.models import Profile
+    from app.services.playground import validate_reply
+
+    cofounder, _tara = _voice_projects()
+    ctx = dict(
+        portfolio="http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff",
+        live_urls=["https://agent.example.com"],
+    )
+    claim = (
+        "hey Sara\nI am Atul a full stack dev\n"
+        "recently I worked on AI Cofounder https://agent.example.com\n"
+        "I picked this one because it already covers your voice calls and booking need.\n"
+        "please review my portfolio: http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff"
+    )
+    assert not validate_reply(claim, unsupported_claim_labels=["voice calls and booking"], **ctx)
+    assert validate_reply(claim, unsupported_claim_labels=[], **ctx)
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": claim}}]}
+
+        def raise_for_status(self):
+            pass
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured["json"] = json
+            return _Resp()
+
+    monkeypatch.setattr(svc.settings, "OPENAI_API_KEY", "test-openai")
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _Client)
+    reply = asyncio.run(
+        svc.generate_reply(
+            profile=Profile(name="Atul", skills=[]),
+            projects=[cofounder],
+            client_message=VOICE_JOB,
+        )
+    )
+    # Unsupported LLM claim rejected: the honest template ships instead.
+    assert "covers your voice calls and booking need" not in reply
+    assert "covers your AI agent work need" in reply
+

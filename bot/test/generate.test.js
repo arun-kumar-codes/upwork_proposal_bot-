@@ -518,6 +518,92 @@ test("quality: template adapts per job and never invents skills from the job pos
   assert.equal(validateProposal(claim, { ...ctx, verifiedTechsList: ["react"] }), true);
 });
 
+// --- Hardening: distinctive proof, internal text, honest relevance ----------
+const VOICE_JOB_BOT = "Hi I am Sara we run a real estate agency and we need a voice agent that calls leads on the phone and books meetings on our calendar so our team stops chasing calls all day";
+
+test("hardening: voice claim requires distinctive evidence (Atul x voice)", () => {
+  const { templateProposal, selectProjects } = app._test;
+  const cofounder = { title: "AI Cofounder", category: "ai + full stack", live_url: "https://agent.example.com", description: "AI Cofounder agent that helps entrepreneurs brainstorm ideas and market analysis", result: "", tech_stack: [], profiles: [{ name: "Atul" }] };
+  const tara = { title: "Tara", category: "ai + full stack + automation", live_url: "https://tara.example.com", description: "Business automation through WhatsApp or voice. Connects tools for email and follow ups", result: "", tech_stack: [], profiles: [{ name: "Atul" }] };
+  const picked = selectProjects([cofounder, tara], { profile: "Atul", category: null, message: VOICE_JOB_BOT });
+  assert.equal(picked[0].title, "Tara");
+  assert.match(picked[0].reason, /covers your voice calls and booking need/);
+
+  const weak = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [cofounder] });
+  assert.doesNotMatch(weak, /covers your voice calls and booking need/);
+  assert.match(weak, /covers your AI agent work need/); // honest related claim
+
+  const strong = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [tara] });
+  assert.match(strong, /covers your voice calls and booking need/);
+});
+
+test("hardening: weak-only voice match gets related wording (Aayush x voice)", () => {
+  const { templateProposal } = app._test;
+  const text = templateProposal({
+    profile: "Aayush",
+    clientMessage: "We need a voice agent to answer our phone calls",
+    category: null,
+    projects: [{ title: "Lead Helper", category: "ai", live_url: "https://helper.example.com", description: "agent dashboard that helps teams track leads", result: "", tech_stack: [] }],
+  });
+  assert.doesNotMatch(text, /covers your voice/);
+  assert.match(text, /shows related AI agent work/);
+});
+
+test("hardening: internal status and collaboration text never leaks", () => {
+  const { publicProofText, templateProposal } = app._test;
+  assert.equal(
+    publicProofText({ result: "Doc status: In-Progress.", description: "Multi-tenant RAG assistant. Each tenant uploads documents and asks questions" }).startsWith("Multi-tenant RAG assistant"),
+    true,
+  );
+  assert.match(
+    publicProofText({ result: "Live IP app. Shared by Gopalan and Vikas.", description: "AI sales rep. Makes outbound calls and books Google Calendar meetings" }),
+    /Makes outbound calls/,
+  );
+  // Legitimate public results are preserved, not stripped.
+  assert.equal(
+    publicProofText({ result: "Live phone agents are answering calls for the clinic", description: "phone agent for clinics" }),
+    "Live phone agents are answering calls for the clinic",
+  );
+  const text = templateProposal({
+    profile: "Atul", clientMessage: "Hi I am Sara we need an AI assistant that answers questions from our own documents and manuals", category: "ai",
+    projects: [{ title: "Lomex AI", category: "ai + full stack", live_url: "https://lomex.ai", description: "Multi-tenant RAG assistant. Each tenant uploads documents and asks questions", result: "Doc status: In-Progress.", tech_stack: [] }],
+  });
+  assert.doesNotMatch(text, /Doc status|In-Progress/);
+  assert.match(text, /uploads documents and asks questions/);
+});
+
+test("hardening: shopify claim requires real store evidence (Arun positive)", () => {
+  const { templateProposal } = app._test;
+  const job = "Hi I am Lena we need a Shopify store where customers can browse our products and pay online with a smooth checkout and cart";
+  const positive = templateProposal({
+    profile: "Arun", clientMessage: job, category: null,
+    projects: [{ title: "AhorraTya", category: "full stack", live_url: "https://deals.example.com", description: "Deals site so shoppers can find store promotions and compare offers", result: "", tech_stack: [] }],
+  });
+  assert.match(positive, /covers your store and checkout need/);
+  const negative = templateProposal({
+    profile: "Atul", clientMessage: job, category: null,
+    projects: [{ title: "AI Cofounder", category: "ai + full stack", live_url: "https://agent.example.com", description: "AI Cofounder agent that helps entrepreneurs brainstorm ideas and market analysis", result: "", tech_stack: [] }],
+  });
+  assert.doesNotMatch(negative, /covers your store and checkout need/);
+  assert.match(negative, /recent live work I shipped/);
+});
+
+test("hardening: category detection covers voice, store and dashboard", () => {
+  const cats = ["ai", "ai + full stack", "automation", "full stack"];
+  assert.equal(detectCategory({ message: VOICE_JOB_BOT, hubCategories: cats }), "voice");
+  assert.equal(detectCategory({ message: "Hi I am Lena we need a Shopify store where customers can browse products and pay online", hubCategories: cats }), "shopify");
+  assert.equal(detectCategory({ message: "Hi I am Raj we need a dashboard with live trading charts and reporting", hubCategories: cats }), "dashboard");
+  assert.equal(detectCategory({ message: "Build a React frontend", hubCategories: ["ml", "web"] }), "web");
+});
+
+test("hardening: validator rejects unsupported coverage claims", () => {
+  const { validateProposal } = app._test;
+  const claim = `hey Sara\nI am Atul a full stack dev\nrecently I worked on AI Cofounder https://agent.example.com\nI picked this one because it already covers your voice calls and booking need.\nplease review my portfolio: http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff`;
+  const ctx = { portfolio: "http://116.202.210.102:3700/portfolio/69492da930db86ebbad049ff", liveUrls: ["https://agent.example.com"] };
+  assert.equal(validateProposal(claim, { ...ctx, unsupportedClaimLabels: ["voice calls and booking"] }), false);
+  assert.equal(validateProposal(claim, { ...ctx, unsupportedClaimLabels: [] }), true);
+});
+
 test("isolation: unknown freelancer is rejected, never signed for", async () => {
   useIsoEnv();
   const res = await generate("test-bot-key", {

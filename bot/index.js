@@ -83,6 +83,12 @@ function detectCategory({ explicit, message, hubCategories = [] }) {
     return pickHubSpelling(canon) || canon || explicit.toString().toLowerCase().trim();
   }
   const text = ` ${(message || "").toLowerCase()} `;
+  // Voice, store and dashboard posts name no Hub category: fall back to
+  // the job's primary need so they get an accurate category, not a blank.
+  const primaryNeed = analyzeJob(message || "").primary;
+  if (primaryNeed && NEED_CATEGORY[primaryNeed.key]) {
+    return pickHubSpelling(primaryNeed.key === "store" ? "shopify" : primaryNeed.key) || NEED_CATEGORY[primaryNeed.key];
+  }
   // Prefer a canonical that maps onto a real Hub category.
   const found = [];
   for (const [canon, aliases] of Object.entries(TECH_ALIASES)) {
@@ -257,17 +263,21 @@ const STOPWORDS = new Set([
   "i", "am", "is", "are", "that", "this", "it", "so", "can", "where",
   "style", "like", "online", "please", "us", "my", "me",
 ]);
+// "proof" words are distinctive evidence: only they may support a
+// "covers your ... need" claim. "weak" words show related experience only.
 const NEED_SIGNALS = [
-  { key: "voice", aliases: ["voice agent", "voice ai", "voice assistant", "phone call", "outbound calls", "inbound calls", "calls leads"], label: "voice calls and booking", understand: "you need a voice agent that talks to leads and books the meeting without your team chasing calls", approach: "I would start with your call flow and booking rules and test real calls early so the tone and handoffs feel right", proof: ["voice", "calls", "call", "calling", "calendar", "booking", "leads", "meetings", "whatsapp", "agent"] },
-  { key: "docs", aliases: ["documents", "manuals", "pdf", "knowledge base", "searching pdf", "our own docs"], label: "answers from your documents", understand: "you need quick answers from your own documents so your team stops hunting through files", approach: "I would start with your real documents and the questions your team asks most and build the search around those first", proof: ["documents", "document", "rag", "uploads", "questions", "answers", "manuals", "pdf"] },
-  { key: "crm", aliases: ["crm", "hubspot", "appointments", "front desk", "sales pipeline", "manage patient"], label: "customer and booking flow", understand: "you need one simple flow that keeps customers and bookings together instead of scattered follow ups", approach: "I would start with your booking and follow up flow and keep it simple for the team that uses it daily", proof: ["crm", "hospital", "appointments", "booking", "leads", "customers", "patient"] },
-  { key: "store", aliases: ["shopify", "store", "ecommerce", "e-commerce", "checkout", "cart", "pay online", "products"], label: "store and checkout", understand: "you need a store where customers can browse and pay without friction", approach: "I would start with your product pages and checkout and get a live preview in front of you early", proof: ["store", "shop", "products", "checkout", "shoppers", "promotions", "offers", "customers"] },
-  { key: "dashboard", aliases: ["dashboard", "trading", "charts", "reporting", "admin panel", "analytics"], label: "dashboard and live data", understand: "you need a clear dashboard that shows live numbers and lets you act fast", approach: "I would start with the main screen your team opens daily and wire the live data into that first", proof: ["dashboard", "trading", "charts", "orders", "reports", "data", "platform", "live"] },
-  { key: "scraping", aliases: ["scrap", "crawl", "extract data", "collect leads", "gather data"], label: "data collection", understand: "you need clean data collected on schedule without manual copying", approach: "I would start with one source end to end and lock the output format before scaling to the rest", proof: ["scrapes", "scraping", "extracts", "data", "websites", "pipeline"] },
-  { key: "automation", aliases: ["automat", "whatsapp", "email sequence", "manual work", "manual steps", "manual process"], label: "automation of manual work", understand: "you need the slow manual steps taken off your team so follow ups happen on time every time", approach: "I would map your current manual flow first and automate the slowest step first so you see value fast", proof: ["automation", "automate", "whatsapp", "email", "scheduling", "invoicing", "workflow"] },
-  { key: "ai_agent", aliases: ["ai agent", "chatbot", "ai assistant", "ai tool", "artificial intelligence", "agent that"], label: "AI agent work", understand: "you need an AI agent that does real work for customers instead of only answering chats", approach: "I would start with the three jobs your agent must finish and build those end to end before adding extras", proof: ["agent", "agents", "ai", "chatbot", "voice", "assistant", "automation"] },
-  { key: "website", aliases: ["website", "web app", "landing page", "web developer", "site for"], label: "website build", understand: "you need a clean website that explains your offer and turns visitors into enquiries", approach: "I would start with your main page and enquiry flow and share a live preview in small steps", proof: ["site", "website", "web", "app", "pages", "login"] },
+  { key: "voice", aliases: ["voice agent", "voice ai", "voice assistant", "phone call", "outbound calls", "inbound calls", "calls leads"], label: "voice calls and booking", understand: "you need a voice agent that talks to leads and books the meeting without your team chasing calls", approach: "I would start with your call flow and booking rules and test real calls early so the tone and handoffs feel right", proof: ["voice", "calls", "call", "calling", "phone", "telephony", "outbound", "inbound", "calendar", "booking", "whatsapp"], weak: ["agent", "agents", "leads", "meetings"] },
+  { key: "docs", aliases: ["documents", "manuals", "pdf", "knowledge base", "searching pdf", "our own docs"], label: "answers from your documents", understand: "you need quick answers from your own documents so your team stops hunting through files", approach: "I would start with your real documents and the questions your team asks most and build the search around those first", proof: ["documents", "document", "rag", "uploads", "questions", "answers", "manuals", "pdf"], weak: [] },
+  { key: "crm", aliases: ["crm", "hubspot", "appointments", "front desk", "sales pipeline", "manage patient"], label: "customer and booking flow", understand: "you need one simple flow that keeps customers and bookings together instead of scattered follow ups", approach: "I would start with your booking and follow up flow and keep it simple for the team that uses it daily", proof: ["crm", "hospital", "appointments", "booking", "leads", "customers", "patient"], weak: [] },
+  { key: "store", aliases: ["shopify", "store", "ecommerce", "e-commerce", "checkout", "cart", "pay online", "products"], label: "store and checkout", understand: "you need a store where customers can browse and pay without friction", approach: "I would start with your product pages and checkout and get a live preview in front of you early", proof: ["store", "shop", "shopify", "products", "checkout", "cart", "shoppers", "promotions", "ecommerce"], weak: ["customers", "offers"] },
+  { key: "dashboard", aliases: ["dashboard", "trading", "charts", "reporting", "admin panel", "analytics"], label: "dashboard and live data", understand: "you need a clear dashboard that shows live numbers and lets you act fast", approach: "I would start with the main screen your team opens daily and wire the live data into that first", proof: ["dashboard", "trading", "charts", "reporting", "analytics", "orders", "reports"], weak: ["data", "platform", "live"] },
+  { key: "scraping", aliases: ["scrap", "crawl", "extract data", "collect leads", "gather data"], label: "data collection", understand: "you need clean data collected on schedule without manual copying", approach: "I would start with one source end to end and lock the output format before scaling to the rest", proof: ["scrapes", "scraping", "extracts", "crawl", "crawls"], weak: ["data", "websites", "pipeline"] },
+  { key: "automation", aliases: ["automat", "whatsapp", "email sequence", "manual work", "manual steps", "manual process"], label: "automation of manual work", understand: "you need the slow manual steps taken off your team so follow ups happen on time every time", approach: "I would map your current manual flow first and automate the slowest step first so you see value fast", proof: ["automation", "automate", "automated", "workflow", "scheduling", "invoicing"], weak: ["whatsapp", "email"] },
+  { key: "ai_agent", aliases: ["ai agent", "chatbot", "ai assistant", "ai tool", "artificial intelligence", "agent that"], label: "AI agent work", understand: "you need an AI agent that does real work for customers instead of only answering chats", approach: "I would start with the three jobs your agent must finish and build those end to end before adding extras", proof: ["agent", "agents", "ai", "chatbot", "voice", "assistant", "automation"], weak: [] },
+  { key: "website", aliases: ["website", "web app", "landing page", "web developer", "site for"], label: "website build", understand: "you need a clean website that explains your offer and turns visitors into enquiries", approach: "I would start with your main page and enquiry flow and share a live preview in small steps", proof: ["site", "website", "web", "pages", "login"], weak: ["app"] },
 ];
+// Primary need -> category label, used only when no Hub category matches.
+const NEED_CATEGORY = { voice: "voice", store: "shopify", dashboard: "dashboard" };
 
 function extractClientName(message) {
   const m = (message || "").match(
@@ -356,8 +366,13 @@ function scoreProject(p, analysis, category, profile) {
   const contentWords = new Set(content.match(/[a-z0-9+#]+/g) || []);
   for (const need of analysis.needs.slice(0, 3)) {
     if (need.proof.some((w) => contentWords.has(w))) {
-      score += 2;
+      // Distinctive evidence only: this is the claim-eligible tier.
+      score += 3;
       reasons.push(`covers your ${need.label} need`);
+    } else if ((need.weak || []).some((w) => contentWords.has(w))) {
+      // Related experience: ranks below real proof, never claimed.
+      score += 1;
+      reasons.push(`related experience: ${need.label}`);
     }
   }
   let overlap = 0;
@@ -518,6 +533,20 @@ const INTERNAL_MARKERS = [
   "team confirmed",
   "confirmed active",
   "internal note",
+  // Status / collaboration boilerplate from the same Notes column.
+  "doc status",
+  "shared by",
+  "live ip",
+  "profile not",
+  "not listed",
+  "also listed",
+  "listed twice",
+  "counted once",
+  "repo name",
+  "on laptop",
+  "cloudflare",
+  "previous deployment",
+  "saml login",
 ];
 
 function isInternalNote(text) {
@@ -532,6 +561,23 @@ function publicProofText(project) {
   if (description && !isInternalNote(description)) return description;
   // Fail closed: a tainted field is dropped whole, never sentence-mined.
   return "";
+}
+
+function citedProof(projects) {
+  // The project a proposal actually cites: first with a live link.
+  return (projects || []).find((p) => p.live_url) || (projects || [])[0] || null;
+}
+
+function eligibleClaimLabels(proof, analysis) {
+  // Need labels the cited project may honestly claim: distinctive only.
+  if (!proof) return new Set();
+  const content = `${proof.title || ""} ${publicProofText(proof)} ${proof.description || ""}`.toLowerCase();
+  const contentWords = new Set(content.match(/[a-z0-9+#]+/g) || []);
+  return new Set(
+    analysis.needs
+      .filter((n) => n.proof.some((w) => contentWords.has(w)))
+      .map((n) => n.label),
+  );
 }
 
 function roleFor(category, canonSet) {
@@ -599,7 +645,19 @@ function templateProposal({ profile, clientName, category, clientMessage, projec
     );
     const { reasons } = scoreProject(proof, analysis, category);
     const needReason = reasons.find((r) => r.startsWith("covers your"));
-    if (needReason) lines.push(`I picked this one because it already ${needReason}.`);
+    if (needReason) {
+      lines.push(`I picked this one because it already ${needReason}.`);
+    } else if (primary && reasons.some((r) => r.startsWith("related experience"))) {
+      // Related work only: never imply the specific capability.
+      lines.push(
+        primary.key === "voice"
+          ? "I picked this one because it shows related AI agent work."
+          : "I picked this one because it is my closest related work.",
+      );
+    } else if (primary) {
+      // No verified match for this need: show recent work honestly.
+      lines.push("I picked this one to show recent live work I shipped.");
+    }
   }
 
   lines.push("");
@@ -622,13 +680,16 @@ function templateProposal({ profile, clientName, category, clientMessage, projec
   return lines.join("\n");
 }
 
-function validateProposal(text, { portfolio = null, liveUrls = [], collaboratorPortfolios = [], verifiedTechsList = null } = {}) {
+function validateProposal(text, { portfolio = null, liveUrls = [], collaboratorPortfolios = [], verifiedTechsList = null, unsupportedClaimLabels = null } = {}) {
   if (!text || typeof text !== "string") return false;
   const lower = text.toLowerCase();
   if (!lower.includes("hey")) return false;
   if (!lower.includes("recently")) return false;
   if (text.includes(",")) return false; // no commas anywhere in the body
   if (lower.includes("github.com")) return false;
+  for (const label of unsupportedClaimLabels || []) {
+    if (lower.includes(`covers your ${String(label).toLowerCase()} need`)) return false;
+  }
   if (verifiedTechsList && claimsUnverifiedTech(text, verifiedTechsList)) return false;
   for (const phrase of BANNED_PHRASES) {
     if (lower.includes(phrase)) return false;
@@ -737,8 +798,10 @@ async function generateProposal(ctx) {
     const data = await resp.json();
     const text = (data.choices?.[0]?.message?.content || "").trim();
     if (!text) throw new Error("OpenAI empty reply");
+    const eligible = eligibleClaimLabels(citedProof(ctx.projects || []), analysis);
+    const unsupportedClaimLabels = analysis.needs.map((n) => n.label).filter((l) => !eligible.has(l));
     // The validator is the contract: corporate or off-shape output never ships.
-    if (!validateProposal(text, { portfolio, liveUrls, collaboratorPortfolios, verifiedTechsList: verified })) return fallback();
+    if (!validateProposal(text, { portfolio, liveUrls, collaboratorPortfolios, verifiedTechsList: verified, unsupportedClaimLabels })) return fallback();
     return { text: sanitizeProposal(text), mode: "openai" };
   } catch {
     return fallback();
@@ -875,6 +938,9 @@ module.exports._test = {
   analyzeJob,
   verifiedTechs,
   claimsUnverifiedTech,
+  citedProof,
+  eligibleClaimLabels,
+  scoreProject,
   PORTFOLIO_LINKS,
   PROFILE_ALIASES,
 };
