@@ -402,7 +402,9 @@ function selectProjects(projects, { profile, category, message, limit = 3 } = {}
   const scored = (projects || []).map((p, idx) => {
     const { score, reasons } = scoreProject(p, analysis, category, profile);
     return { p, score, idx, reasons };
-  });
+  }).filter(({ reasons }) => reasons.length > 0);
+  // Relevance floor (mirrors Hub): a project with no relevance reasons is
+  // not proposal proof, however recent or live it is.
   scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
   return scored.slice(0, limit).map(({ p, reasons }) => ({
     title: (p.title ? String(p.title) : "Project").trim() || "Project",

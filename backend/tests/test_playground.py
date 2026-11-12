@@ -1272,3 +1272,84 @@ def test_template_closing_is_contextual_by_need_and_tier():
             assert generic not in text
         assert "Please let me know when we can proceed further." in text
 
+
+_N8N_JOB = (
+    "Hi I am Jonas we need an n8n automation workflow that watches our "
+    "CRM for new leads and sends personalised follow up emails "
+    "automatically without anyone doing manual work"
+)
+_CHATBOT_JOB = (
+    "Hi I am Tom we need an AI agent chatbot on our website that "
+    "answers customer questions and books appointments for our clinic "
+    "without our front desk getting involved"
+)
+
+
+def _arun_projects():
+    from app.models import Project
+
+    return [
+        Project(
+            title="No Limit Gaming", category="ai + full stack",
+            live_url="https://nolimitgaming.bet/signin",
+            description="Sports prediction site. Users predict with virtual "
+                        "chips that have no cash value. Includes an AI advisory.",
+            result="", tech_stack=[],
+        ),
+        Project(
+            title="InjuryConnect", category="full stack",
+            live_url="https://injuryconnect.example.com",
+            description="Platform connecting injured workers with clinics "
+                        "and legal help.",
+            result="", tech_stack=[],
+        ),
+        Project(
+            title="AhorraTya", category="full stack",
+            live_url="https://ahorratya.example.com",
+            description="Savings and deals app for shoppers.",
+            result="", tech_stack=[],
+        ),
+    ]
+
+
+def test_relevance_floor_arun_n8n_zero_reason_selects_nothing():
+    """Arun x n8n: all three projects score with zero reasons -> []."""
+    from app.services.playground import score_project, analyze_job, select_projects
+
+    projects = _arun_projects()
+    analysis = analyze_job(_N8N_JOB, "automation")
+    for p in projects:
+        _score, reasons = score_project(p, analysis, "automation")
+        assert reasons == [], (p.title, reasons)
+    assert select_projects(projects, "automation", 3, client_message=_N8N_JOB) == []
+
+
+def test_relevance_floor_preserves_arun_chatbot_legitimate_match():
+    """Arun x chatbot: No Limit Gaming has real covers-reasons and stays."""
+    from app.services.playground import select_projects
+
+    picked = select_projects(
+        _arun_projects(), "ai", 3, client_message=_CHATBOT_JOB
+    )
+    assert picked
+    assert picked[0][0].title == "No Limit Gaming"
+    assert "covers your AI agent work need" in picked[0][1]
+
+
+def test_relevance_floor_zero_reason_and_related_reason_boundary():
+    """Zero-reason projects drop out; any real reason keeps a project."""
+    from app.models import Project
+    from app.services.playground import select_projects
+
+    kitchen = Project(
+        title="PrimeTime", category="web",
+        live_url="https://primetime.example.com",
+        description="Kitchen timer app for home cooks with recipes",
+        result="", tech_stack=[],
+    )
+    assert select_projects([kitchen], "automation", 3, client_message=_N8N_JOB) == []
+    picked = select_projects(
+        [kitchen] + _arun_projects(), "ai", 3, client_message=_CHATBOT_JOB
+    )
+    assert [p.title for p, _ in picked] == ["No Limit Gaming"]
+

@@ -284,6 +284,13 @@ def select_projects(
     scored = []
     for idx, p in enumerate(pool):
         score, reasons = score_project(p, analysis, category)
+        # Relevance floor: a project with no relevance reasons at all is
+        # not proposal proof, however recent or live it is. Returning []
+        # gives the honest proof-free proposal instead of dressing up
+        # unrelated work. The synthetic "no exact category match" note is
+        # not a reason and never passes the floor on its own.
+        if not reasons:
+            continue
         if category and not related:
             reasons.insert(0, "no exact category match — closest relevant project")
         scored.append((score, idx, p, reasons))

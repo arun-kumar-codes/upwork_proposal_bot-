@@ -671,6 +671,21 @@ test("template closing is contextual by need and evidence tier", () => {
   }
 });
 
+test("relevance floor: zero-reason projects are not proof (Arun cases)", () => {
+  const { selectProjects } = app._test;
+  const arunProjects = [
+    { title: "No Limit Gaming", category: "ai + full stack", live_url: "https://nolimitgaming.bet/signin", description: "Sports prediction site. Users predict with virtual chips that have no cash value. Includes an AI advisory.", result: "", tech_stack: [], profiles: [{ name: "Arun" }] },
+    { title: "InjuryConnect", category: "full stack", live_url: "https://injuryconnect.example.com", description: "Platform connecting injured workers with clinics and legal help.", result: "", tech_stack: [], profiles: [{ name: "Arun" }] },
+    { title: "AhorraTya", category: "full stack", live_url: "https://ahorratya.example.com", description: "Savings and deals app for shoppers.", result: "", tech_stack: [], profiles: [{ name: "Arun" }] },
+  ];
+  const n8nJob = "Hi I am Jonas we need an n8n automation workflow that watches our CRM for new leads and sends personalised follow up emails automatically without anyone doing manual work";
+  assert.deepEqual(selectProjects(arunProjects, { profile: "Arun", category: "automation", message: n8nJob }), []);
+  const chatbotJob = "Hi I am Tom we need an AI agent chatbot on our website that answers customer questions and books appointments for our clinic without our front desk getting involved";
+  const picked = selectProjects(arunProjects, { profile: "Arun", category: "ai", message: chatbotJob });
+  assert.equal(picked[0].title, "No Limit Gaming");
+  assert.match(picked[0].reason, /covers your AI agent work need/);
+});
+
 test("isolation: unknown freelancer is rejected, never signed for", async () => {
   useIsoEnv();
   const res = await generate("test-bot-key", {

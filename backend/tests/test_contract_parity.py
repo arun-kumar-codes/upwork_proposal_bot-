@@ -96,9 +96,11 @@ def test_history_by_id_and_error_persisted(client, monkeypatch):
     _seed(client)
     ok = client.post(
         "/api/playground/generate",
-        json={"profile": "Web Dev", "client_message": "x", "mode": "simulated"},
+        json={"profile": "Web Dev", "client_message": "Need a web app for our shop", "mode": "simulated"},
     )
     # Simulated without a key fails (400) but must persist with error set.
+    # (The message must match a seeded project: with the relevance floor,
+    # an unmatched message takes the honest proof-free path instead.)
     assert ok.status_code == 400
     history = client.get("/api/playground/history").json()
     assert len(history) == 1
@@ -204,10 +206,11 @@ def test_select_projects_falls_back_when_category_has_no_match():
     picked = select_projects(projects, "ai + full stack + automation", 3)
     assert [p.title for p, _ in picked] == ["Live One"]
     assert "related category" in picked[0][1]
-    # A truly unrelated category still falls back, live demos first.
+    # A truly unrelated category passes nothing through the relevance
+    # floor: no project has a relevance reason, so selection is empty and
+    # the proposal takes the honest proof-free path.
     picked = select_projects(projects, "shopify", 3)
-    assert [p.title for p, _ in picked][0] == "Live One"  # live_url preferred
-    assert all("no exact category match" in reason for _, reason in picked)
+    assert picked == []
 
 
 def test_simulated_corporate_llm_output_falls_back_to_contract(client, monkeypatch):
