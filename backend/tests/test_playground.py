@@ -1217,3 +1217,58 @@ def test_need_tiers_primary_secondary_and_validator_enforcement():
         **ctx,
     )
 
+
+_OLD_GENERIC_CLOSINGS = (
+    "I can start right away and I will share progress in small steps",
+    "you will talk directly with the person writing the code so nothing gets lost in between",
+)
+
+
+def test_template_closing_is_contextual_by_need_and_tier():
+    """Closings name the job's first checkpoint and respect evidence tier."""
+    from app.models import Profile
+    from app.services.playground import template_reply
+
+    cofounder, tara = _voice_projects()
+    profile = Profile(name="Atul", skills=[])
+
+    cover = template_reply(
+        profile=profile, projects=[tara], client_message=VOICE_JOB, category=None
+    )
+    assert "You will hear test calls before the agent handles live leads." in cover
+    assert "The project shown above gives that checkpoint a proven starting point." in cover
+
+    related = template_reply(
+        profile=profile, projects=[cofounder], client_message=VOICE_JOB, category=None
+    )
+    assert "You will hear test calls before the agent handles live leads." in related
+    assert "The related work gives useful context" in related
+    assert "proven starting point" not in related
+
+    none = template_reply(
+        profile=Profile(name="Deepanshu", skills=[]),
+        projects=[],
+        client_message=VOICE_JOB,
+        category=None,
+    )
+    assert "You will hear test calls before the agent handles live leads." in none
+    assert "That checkpoint will prove the parts specific to your job" in none
+
+    docs = template_reply(
+        profile=profile,
+        projects=[cofounder],
+        client_message=(
+            "Hi I am Sara we run a construction firm and we need an AI assistant "
+            "that answers questions from our own documents and manuals so staff "
+            "stop searching PDFs all day and it should cite the source document"
+        ),
+        category=None,
+    )
+    assert "You will test answers from your real documents before a wider rollout." in docs
+    assert "You will hear test calls" not in docs
+
+    for text in (cover, related, none, docs):
+        for generic in _OLD_GENERIC_CLOSINGS:
+            assert generic not in text
+        assert "Please let me know when we can proceed further." in text
+

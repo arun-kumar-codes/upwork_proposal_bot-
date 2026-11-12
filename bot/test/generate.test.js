@@ -647,6 +647,30 @@ test("evidence tiers: per-need enforcement (Atul secondary-need case)", () => {
   assert.equal(validateProposal(claim, { ...ctx, claimTier: "RELATED", needTiers: { "website build": "COVER" } }), false);
 });
 
+test("template closing is contextual by need and evidence tier", () => {
+  const { templateProposal } = app._test;
+  const cofounder = { title: "AI Cofounder", category: "ai + full stack", live_url: "https://agent.example.com", description: "AI Cofounder agent that helps entrepreneurs brainstorm ideas and market analysis", result: "", tech_stack: [] };
+  const tara = { title: "Tara", category: "ai + full stack + automation", live_url: "https://tara.example.com", description: "Business automation through WhatsApp or voice. Connects tools for email and follow ups", result: "", tech_stack: [] };
+  const cover = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [tara] });
+  assert.match(cover, /You will hear test calls before the agent handles live leads\./);
+  assert.match(cover, /The project shown above gives that checkpoint a proven starting point\./);
+  const related = templateProposal({ profile: "Atul", clientMessage: VOICE_JOB_BOT, category: null, projects: [cofounder] });
+  assert.match(related, /You will hear test calls before the agent handles live leads\./);
+  assert.match(related, /The related work gives useful context/);
+  assert.doesNotMatch(related, /proven starting point/);
+  const none = templateProposal({ profile: "Deepanshu", clientMessage: VOICE_JOB_BOT, category: null, projects: [] });
+  assert.match(none, /You will hear test calls before the agent handles live leads\./);
+  assert.match(none, /That checkpoint will prove the parts specific to your job/);
+  const docs = templateProposal({ profile: "Atul", clientMessage: "Hi I am Sara we need an AI assistant that answers questions from our own documents and manuals and should cite the source document", category: null, projects: [cofounder] });
+  assert.match(docs, /You will test answers from your real documents before a wider rollout\./);
+  assert.doesNotMatch(docs, /You will hear test calls/);
+  for (const text of [cover, related, none, docs]) {
+    assert.doesNotMatch(text, /I can start right away and I will share progress in small steps/);
+    assert.doesNotMatch(text, /you will talk directly with the person writing the code/);
+    assert.match(text, /Please let me know when we can proceed further\./);
+  }
+});
+
 test("isolation: unknown freelancer is rejected, never signed for", async () => {
   useIsoEnv();
   const res = await generate("test-bot-key", {

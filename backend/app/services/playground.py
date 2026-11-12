@@ -366,11 +366,36 @@ _JOB_PHRASES = {
     "Python": "I build backends and tools that stay simple to maintain",
     "web": "I build clean websites and web apps for real clients",
 }
-_FIT_LINES = [
-    "your requirement is clear to me and I already know how the full flow should work",
-    "I can start right away and I will share progress in small steps",
-    "you will talk directly with the person writing the code so nothing gets lost in between",
-]
+_CLOSING_CHECKPOINTS = {
+    "voice": "You will hear test calls before the agent handles live leads.",
+    "docs": "You will test answers from your real documents before a wider rollout.",
+    "crm": "You will see one lead move through the full follow up flow before we widen it.",
+    "store": "You will click through the buying flow before we polish the rest of the store.",
+    "dashboard": "You will see the main screen running with live numbers before we add extra views.",
+    "scraping": "You will check the first collected output before we add more sources.",
+    "automation": "You will see the slowest manual step automated before we move to the next one.",
+    "ai_agent": "You will try the first agent task yourself before we add more tasks.",
+    "website": "You will review the main page live before we build the remaining pages.",
+}
+
+
+def _closing_lines(primary: dict | None, tier: str) -> list[str]:
+    """Contextual closing: a job-specific first checkpoint plus one honest
+    sentence about how the evidence supports that checkpoint."""
+    key = primary["key"] if primary else ""
+    first = _CLOSING_CHECKPOINTS.get(
+        key, "You will see the smallest useful version working before we add more."
+    )
+    if tier == "COVER":
+        second = "The project shown above gives that checkpoint a proven starting point."
+    elif tier == "RELATED":
+        second = (
+            "The related work gives useful context and that checkpoint will "
+            "prove the parts specific to your job."
+        )
+    else:
+        second = "That checkpoint will prove the parts specific to your job before we expand the work."
+    return [first, second]
 
 
 def resolve_person(raw: str | None) -> tuple[str, str | None]:
@@ -694,7 +719,7 @@ def template_reply(
     lines.append("")
     if primary:
         lines.append(primary["approach"])
-    lines.extend(_FIT_LINES[1:])
+    lines.extend(_closing_lines(primary, claim_tier(proof, analysis, category)))
     if portfolio:
         lines.append("")
         lines.append(f"please review my portfolio: {portfolio}")
@@ -847,7 +872,9 @@ async def generate_reply(
         "two short sentences about the given real project with its LIVE "
         "demo link pasted exactly; one sentence tying that project to "
         "their need; one concrete approach sentence for their job; two "
-        "short casual fit sentences; "
+        "short closing sentences with one naming what the client will see "
+        "or test at the first checkpoint for this job and one honest "
+        "sentence about how the shown project supports that checkpoint; "
         + (
             f"one line exactly: please review my portfolio: {portfolio}; "
             if portfolio
